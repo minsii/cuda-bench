@@ -1,8 +1,8 @@
 OBJS = cudamemcpy_latency_sync cudamemcpy_latency_async cudamemcpy_latency_async_stream_src cudamemcpy_latency_async_stream_dst
 SRC = cudamemcpy_latency.c
-CC = mpicc
+CC ?= mpicc
 CFLAGS = -O2 -g -I$(CUDA_PATH)/include
-LDFLAGS = -L$(CUDA_PATH)/lib64
+LDFLAGS = -L$(CUDA_PATH)/lib64 -lcuda -lcudart
 
 cudamemcpy_latency_sync: $(SRC)
 	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
