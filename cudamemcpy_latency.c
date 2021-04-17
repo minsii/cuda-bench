@@ -145,12 +145,18 @@ static void cuda_init(void)
     CUDA_ERR_ASSERT(cerr);
 
     enable_p2p(1);
+
+#ifdef TEST_MEMCPY_ASYNC_STREAM
     create_stream(stream_on_dev == 0 ? 0 : 1);
+#endif
+
 }
 
 static void cuda_destroy(void)
 {
+#ifdef TEST_MEMCPY_ASYNC_STREAM
     cudaStreamDestroy(stream);
+#endif
 }
 
 static void set_buffer(char *buf, size_t size, char c)

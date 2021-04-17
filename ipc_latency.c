@@ -131,17 +131,21 @@ static void cuda_init(void)
     cerr = cudaSetDevice(comm_rank);
     CUDA_ERR_ASSERT(cerr);
 
+#ifdef TEST_MEMCPY_ASYNC_STREAM
     /* Only rank 0 handles transfer */
     if (comm_rank == 0) {
         create_stream(stream_on_dev == 0 ? 0 : 1);
     }
+#endif
 }
 
 static void cuda_destroy(void)
 {
+#ifdef TEST_MEMCPY_ASYNC_STREAM
     if (comm_rank == 0) {
         cudaStreamDestroy(stream);
     }
+#endif
 }
 
 static void set_buffer(char *buf, size_t size, char c)
