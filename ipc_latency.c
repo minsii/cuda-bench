@@ -7,6 +7,7 @@
 #include <mpi.h>
 #include <cuda.h>
 #include <cuda_runtime_api.h>
+#include <cuda_profiler_api.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
@@ -362,6 +363,7 @@ int main(int argc, char **argv)
 
         MPI_Barrier(MPI_COMM_WORLD);    /* ensure buffers have been updated */
 
+        cudaProfilerStart();
         double t0, t1;
         /* rank 0 performs data transfer similar to RMA */
         if (comm_rank == 0) {
@@ -377,6 +379,7 @@ int main(int argc, char **argv)
             }
             t1 = MPI_Wtime();
         }
+        cudaProfilerStop();
 
         MPI_Barrier(MPI_COMM_WORLD);    /* ensure data transfer is done on rank 0 */
 

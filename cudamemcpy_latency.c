@@ -7,6 +7,7 @@
 #include <mpi.h>
 #include <cuda.h>
 #include <cuda_runtime_api.h>
+#include <cuda_profiler_api.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
@@ -284,6 +285,7 @@ int main(int argc, char **argv)
         set_buffer(sbuf, buf_size, size);
         reset_buffer(dbuf, buf_size);
 
+        cudaProfilerStart();
         double t0 = MPI_Wtime();
         for (int iter = 0; iter < DEFAULT_ITER; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
@@ -295,6 +297,7 @@ int main(int argc, char **argv)
 #endif
         }
         double t1 = MPI_Wtime();
+        cudaProfilerStop();
 
         /* touch and check destination buffer */
         check_buffer(dbuf, size, DEFAULT_ITER, max_size, size);
