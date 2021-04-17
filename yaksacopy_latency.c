@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <string.h>
 #include <yaksa.h>
+#include <unistd.h>
 
 #define DEFAULT_SIZE 65536
 #define DEFAULT_ITER 10000
@@ -19,7 +20,6 @@
 char *sbuf, *dbuf;
 void *tmpbuf;
 size_t min_size = 1, max_size = DEFAULT_SIZE, buf_size;
-cudaStream_t streams[2];
 
 #define CUDA_ERR_ASSERT(cerr) assert(cerr == cudaSuccess)
 
@@ -104,29 +104,6 @@ static void cuda_free(void *ptr)
     CUDA_ERR_ASSERT(cerr);
 }
 
-static void create_stream(int device)
-{
-    void *ptr = NULL;
-    cudaError_t cerr;
-
-    int cur_device;
-    cerr = cudaGetDevice(&cur_device);
-    CUDA_ERR_ASSERT(cerr);
-
-    if (cur_device != device) {
-        cerr = cudaSetDevice(device);
-        CUDA_ERR_ASSERT(cerr);
-    }
-
-    cerr = cudaStreamCreateWithFlags(&streams[device], cudaStreamNonBlocking);
-    CUDA_ERR_ASSERT(cerr);
-
-    if (cur_device != device) {
-        cerr = cudaSetDevice(cur_device);
-        CUDA_ERR_ASSERT(cerr);
-    }
-}
-
 static void cuda_init(void)
 {
     cudaError_t cerr;
@@ -145,14 +122,6 @@ static void cuda_init(void)
     CUDA_ERR_ASSERT(cerr);
 
     enable_p2p(1);
-    create_stream(0);
-    create_stream(1);
-}
-
-static void cuda_destroy(void)
-{
-    cudaStreamDestroy(streams[0]);
-    cudaStreamDestroy(streams[1]);
 }
 
 static void set_buffer(char *buf, size_t size, char c)
@@ -218,19 +187,40 @@ static void free_buffers(void)
     cudaFreeHost(tmpbuf);
 }
 
-int main(int argc, char **argv)
+static void set_params(int argc, char **argv)
 {
-    int rc = YAKSA_SUCCESS;
-    if (argc > 2) {
-        min_size = atoi(argv[1]);
-        max_size = atoi(argv[2]);
+    int c;
+    char *mins, *maxs;
+    while ((c = getopt(argc, argv, "s:t:")) != -1) {
+        switch (c) {
+            case 's':
+                mins = strtok(optarg, ":");
+                maxs = strtok(NULL, ":");
+                if (mins && maxs) {
+                    min_size = atoll(mins);
+                    max_size = atoll(maxs);
+                }
+                break;
+            case 'h':
+                printf("./ipc_latency -s <message size, format min:max> ");
+                abort();
+                break;
+            default:
+                printf("Unknown option %c\n", optopt);
+                abort();
+                break;
+        }
     }
 
     if (min_size < 1 || max_size < min_size) {
         printf("wrong min_size %ld or wrong max_size %ld\n", min_size, max_size);
-        return -1;
+        abort();
     }
+}
 
+int main(int argc, char **argv)
+{
+    set_params(argc, argv);
     cuda_init();
     yaksa_init(NULL);
 
@@ -274,7 +264,6 @@ int main(int argc, char **argv)
 
     free_buffers();
     yaksa_finalize();
-    cuda_destroy();
 
     return 0;
 }

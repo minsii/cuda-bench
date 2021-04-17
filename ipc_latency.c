@@ -265,7 +265,7 @@ static void set_params(int argc, char **argv)
 {
     int c;
     char *mins, *maxs;
-    while ((c = getopt(argc, argv, "s:t:m:")) != -1)
+    while ((c = getopt(argc, argv, "s:t:m:")) != -1) {
         switch (c) {
             case 's':
                 mins = strtok(optarg, ":");
@@ -281,11 +281,22 @@ static void set_params(int argc, char **argv)
             case 'm':
                 map_to_dev = atoi(optarg);
                 break;
+            case 'h':
+                printf("./ipc_latency -s <message size, format min:max> "
+                       "-t <stream on device, value 0|1> -m <map to device, value 0|1>");
+                abort();
+                break;
             default:
                 printf("Unknown option %c\n", optopt);
                 abort();
                 break;
         }
+    }
+
+    if (min_size < 1 || max_size < min_size) {
+        printf("wrong min_size %ld or wrong max_size %ld\n", min_size, max_size);
+        abort();
+    }
 }
 
 int main(int argc, char **argv)
@@ -295,11 +306,6 @@ int main(int argc, char **argv)
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &comm_rank);
-
-    if (min_size < 1 || max_size < min_size) {
-        printf("wrong min_size %ld or wrong max_size %ld\n", min_size, max_size);
-        goto exit;
-    }
 
     if (comm_size < 2) {
         printf("require at least two processes, comm_size=%d\n", comm_size);

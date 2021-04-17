@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include <unistd.h>
 
 #define DEFAULT_SIZE 65536
 #define DEFAULT_ITER 10000
@@ -18,7 +19,8 @@
 char *sbuf, *dbuf;
 void *tmpbuf;
 size_t min_size = 1, max_size = DEFAULT_SIZE, buf_size;
-cudaStream_t streams[2];
+cudaStream_t stream;
+int stream_on_dev = 0;
 
 #define CUDA_ERR_ASSERT(cerr) assert(cerr == cudaSuccess)
 
@@ -39,13 +41,13 @@ static void memcpy_async(size_t off, size_t size)
     CUDA_ERR_ASSERT(cerr);
 }
 
-static void memcpy_async_stream(size_t off, size_t size, int device)
+static void memcpy_async_stream(size_t off, size_t size)
 {
     int cerr = cudaSuccess;
-    cerr = cudaMemcpyAsync(dbuf + off, sbuf + off, size, cudaMemcpyDefault, streams[device]);
+    cerr = cudaMemcpyAsync(dbuf + off, sbuf + off, size, cudaMemcpyDefault, stream);
     CUDA_ERR_ASSERT(cerr);
 
-    cerr = cudaStreamSynchronize(streams[device]);
+    cerr = cudaStreamSynchronize(stream);
     CUDA_ERR_ASSERT(cerr);
 }
 
@@ -114,13 +116,15 @@ static void create_stream(int device)
         CUDA_ERR_ASSERT(cerr);
     }
 
-    cerr = cudaStreamCreateWithFlags(&streams[device], cudaStreamNonBlocking);
+    cerr = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
     CUDA_ERR_ASSERT(cerr);
 
     if (cur_device != device) {
         cerr = cudaSetDevice(cur_device);
         CUDA_ERR_ASSERT(cerr);
     }
+
+    printf("created stream 0x%lx on device %d\n", stream, device);
 }
 
 static void cuda_init(void)
@@ -141,14 +145,12 @@ static void cuda_init(void)
     CUDA_ERR_ASSERT(cerr);
 
     enable_p2p(1);
-    create_stream(0);
-    create_stream(1);
+    create_stream(stream_on_dev == 0 ? 0 : 1);
 }
 
 static void cuda_destroy(void)
 {
-    cudaStreamDestroy(streams[0]);
-    cudaStreamDestroy(streams[1]);
+    cudaStreamDestroy(stream);
 }
 
 static void set_buffer(char *buf, size_t size, char c)
@@ -214,18 +216,44 @@ static void free_buffers(void)
     cudaFreeHost(tmpbuf);
 }
 
-int main(int argc, char **argv)
+static void set_params(int argc, char **argv)
 {
-    if (argc > 2) {
-        min_size = atoi(argv[1]);
-        max_size = atoi(argv[2]);
+    int c;
+    char *mins, *maxs;
+    while ((c = getopt(argc, argv, "s:t:")) != -1) {
+        switch (c) {
+            case 's':
+                mins = strtok(optarg, ":");
+                maxs = strtok(NULL, ":");
+                if (mins && maxs) {
+                    min_size = atoll(mins);
+                    max_size = atoll(maxs);
+                }
+                break;
+            case 't':
+                stream_on_dev = atoi(optarg);
+                break;
+            case 'h':
+                printf("./ipc_latency -s <message size, format min:max> "
+                       "-t <stream on device, value 0|1>");
+                abort();
+                break;
+            default:
+                printf("Unknown option %c\n", optopt);
+                abort();
+                break;
+        }
     }
 
     if (min_size < 1 || max_size < min_size) {
         printf("wrong min_size %ld or wrong max_size %ld\n", min_size, max_size);
-        return -1;
+        abort();
     }
+}
 
+int main(int argc, char **argv)
+{
+    set_params(argc, argv);
     cuda_init();
     init_buffers();
 
@@ -237,10 +265,8 @@ int main(int argc, char **argv)
         for (int iter = 0; iter < DEFAULT_WARN; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
             memcpy_async(max_size * iter, size);
-#elif defined(TEST_MEMCPY_ASYNC_STREAM_SRC)
-            memcpy_async_stream(max_size * iter, size, 0);
-#elif defined(TEST_MEMCPY_ASYNC_STREAM_DST)
-            memcpy_async_stream(max_size * iter, size, 1);
+#elif defined(TEST_MEMCPY_ASYNC_STREAM)
+            memcpy_async_stream(max_size * iter, size);
 #else
             memcpy_sync(max_size * iter, size);
 #endif
@@ -256,10 +282,8 @@ int main(int argc, char **argv)
         for (int iter = 0; iter < DEFAULT_ITER; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
             memcpy_async(max_size * iter, size);
-#elif defined(TEST_MEMCPY_ASYNC_STREAM_SRC)
-            memcpy_async_stream(max_size * iter, size, 0);
-#elif defined(TEST_MEMCPY_ASYNC_STREAM_DST)
-            memcpy_async_stream(max_size * iter, size, 1);
+#elif defined(TEST_MEMCPY_ASYNC_STREAM)
+            memcpy_async_stream(max_size * iter, size);
 #else /* TEST_MEMCPY_SYNC */
             memcpy_sync(max_size * iter, size);
 #endif

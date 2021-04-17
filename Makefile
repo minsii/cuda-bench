@@ -1,4 +1,4 @@
-OBJS = cudamemcpy_latency_sync cudamemcpy_latency_async cudamemcpy_latency_async_stream_src cudamemcpy_latency_async_stream_dst	\
+OBJS = cudamemcpy_latency_sync cudamemcpy_latency_async cudamemcpy_latency_async_stream	\
 			 yaksacopy_latency_pack yaksacopy_latency_unpack \
 			 ipc_latency_sync ipc_latency_async ipc_latency_async_stream
 
@@ -22,11 +22,8 @@ cudamemcpy_latency_sync: cudamemcpy_latency.c
 cudamemcpy_latency_async: cudamemcpy_latency.c
 	$(CC) -o $@ $< $(CFLAGS) -DTEST_MEMCPY_ASYNC $(LDFLAGS)
 
-cudamemcpy_latency_async_stream_src: cudamemcpy_latency.c
-	$(CC) -o $@ $< $(CFLAGS) -DTEST_MEMCPY_ASYNC_STREAM_SRC $(LDFLAGS)
-
-cudamemcpy_latency_async_stream_dst: cudamemcpy_latency.c
-	$(CC) -o $@ $< $(CFLAGS) -DTEST_MEMCPY_ASYNC_STREAM_DST $(LDFLAGS)
+cudamemcpy_latency_async_stream: cudamemcpy_latency.c
+	$(CC) -o $@ $< $(CFLAGS) -DTEST_MEMCPY_ASYNC_STREAM $(LDFLAGS)
 
 ipc_latency_sync: ipc_latency.c
 	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
