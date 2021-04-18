@@ -6,7 +6,7 @@ SRC = cudamemcpy_latency.c yaksacopy_latency.c ipc_latency.c
 CC ?= mpicc
 YAKSA_PATH ?= .
 CFLAGS = -O2 -g -I$(CUDA_PATH)/include
-LDFLAGS = -L$(CUDA_PATH)/lib64 -lcuda -lcudart
+LDFLAGS = -L$(CUDA_PATH)/lib64 -lcuda -lcudart -lnvToolsExt
 YAKSA_CFLAGS=$(CFLAGS) -I$(YAKSA_PATH)/include
 YAKSA_LDFLAGS=$(LDFLAGS) -L$(YAKSA_PATH)/lib -Wl,-rpath -Wl,$(YAKSA_PATH)/lib -lyaksa
 
