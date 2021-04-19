@@ -443,11 +443,6 @@ int main(int argc, char **argv)
             set_buffer(sbuf, buf_size, size);
             reset_buffer(dbuf, buf_size);
 
-            int cur_device;
-            cudaError_t cerr = cudaGetDevice(&cur_device);
-            CUDA_ERR_ASSERT(cerr);
-            printf("memcpy size %d, cur_device=%d\n", size, cur_device);
-
             double t0, t1;
 
             cudaProfilerStart();
