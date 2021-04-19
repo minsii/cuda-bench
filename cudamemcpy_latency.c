@@ -25,6 +25,9 @@ void *tmpbuf;
 size_t min_size = 1, max_size = DEFAULT_SIZE, buf_size;
 cudaStream_t stream;
 int stream_on_dev = 0;
+int niter = DEFAULT_ITER;
+int nwarm = DEFAULT_WARN;
+int s_devid = 0, d_devid = 1;
 
 #define CUDA_ERR_ASSERT(cerr) assert(cerr == cudaSuccess)
 
@@ -55,7 +58,7 @@ static void memcpy_async_stream(size_t off, size_t size)
     CUDA_ERR_ASSERT(cerr);
 }
 
-static void enable_p2p(int device)
+static void enable_p2p(int device, int remote_device)
 {
     int access = 0;
     cudaError_t cerr;
@@ -64,15 +67,21 @@ static void enable_p2p(int device)
     cerr = cudaGetDevice(&cur_device);
     CUDA_ERR_ASSERT(cerr);
 
-    if (device != cur_device) {
-        cerr = cudaDeviceCanAccessPeer(&access, cur_device, device);
+    cerr = cudaSetDevice(device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaDeviceCanAccessPeer(&access, device, remote_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    if (access) {
+        cerr = cudaDeviceEnablePeerAccess(remote_device, 0);
         CUDA_ERR_ASSERT(cerr);
 
-        if (access) {
-            cerr = cudaDeviceEnablePeerAccess(device, 0);
-            CUDA_ERR_ASSERT(cerr);
-        }
+        printf("enabled P2P for dev %d->%d\n", device, remote_device);
     }
+
+    cerr = cudaSetDevice(cur_device);
+    CUDA_ERR_ASSERT(cerr);
 }
 
 static void *cuda_malloc(size_t size, int device)
@@ -154,7 +163,9 @@ static void cuda_init(void)
     nvtxNameCudaDeviceA(0, "dev0");
     nvtxNameCudaDeviceA(1, "dev1");
 
-    enable_p2p(1);
+    /* enable P2P for dev0->dev1 and dev1->dev0 */
+    enable_p2p(0, 1);
+    enable_p2p(1, 0);
 
 #ifdef TEST_MEMCPY_ASYNC_STREAM
     create_stream(stream_on_dev == 0 ? 0 : 1);
@@ -211,16 +222,17 @@ static void report_buffer_attr(char *buf)
 static void init_buffers(void)
 {
     cudaError_t cerr;
-    buf_size = DEFAULT_ITER * max_size;
+    buf_size = niter * max_size;
 
-    sbuf = cuda_malloc(buf_size, 0);
-    dbuf = cuda_malloc(buf_size, 1);
+    sbuf = cuda_malloc(buf_size, s_devid);
+    dbuf = cuda_malloc(buf_size, d_devid);
 
     cerr = cudaMallocHost(&tmpbuf, buf_size);
     CUDA_ERR_ASSERT(cerr);
 
-    printf("sbuf=%p, dbuf=%p, latency for sizes %ld:%ld, buffer size=%ld\n",
-           sbuf, dbuf, min_size, max_size, buf_size);
+    printf("sbuf=%p from dev %d, dbuf=%p from dev %d,"
+           "latency for sizes %ld:%ld, buffer size=%ld, nwarm=%d, niter=%d\n",
+           sbuf, s_devid, dbuf, d_devid, min_size, max_size, buf_size, nwarm, niter);
     report_buffer_attr(sbuf);
     report_buffer_attr(dbuf);
 }
@@ -235,8 +247,8 @@ static void free_buffers(void)
 static void set_params(int argc, char **argv)
 {
     int c;
-    char *mins, *maxs;
-    while ((c = getopt(argc, argv, "s:t:")) != -1) {
+    char *mins, *maxs, *iter, *warm, *src_devid, *dst_devid;
+    while ((c = getopt(argc, argv, "s:t:i:d:h:")) != -1) {
         switch (c) {
             case 's':
                 mins = strtok(optarg, ":");
@@ -249,9 +261,26 @@ static void set_params(int argc, char **argv)
             case 't':
                 stream_on_dev = atoi(optarg);
                 break;
+            case 'i':
+                warm = strtok(optarg, ":");
+                iter = strtok(NULL, ":");
+                if (warm && iter) {
+                    nwarm = atoi(warm);
+                    niter = atoi(iter);
+                }
+                break;
+            case 'd':
+                src_devid = strtok(optarg, ":");
+                dst_devid = strtok(NULL, ":");
+                if (src_devid && dst_devid) {
+                    s_devid = atoi(src_devid);
+                    d_devid = atoi(dst_devid);
+                }
+                break;
             case 'h':
                 printf("./ipc_latency -s <message size, format min:max> "
-                       "-t <stream on device, value 0|1>");
+                       "-t <stream on device, value 0|1> -i <number of warmming up: number of iteration>"
+                       "-d <src device:dst device|default 0:1>");
                 abort();
                 break;
             default:
@@ -278,7 +307,7 @@ int main(int argc, char **argv)
         /* reset buffer for all iterations */
         set_buffer(sbuf, buf_size, 'a');
         reset_buffer(dbuf, buf_size);
-        for (int iter = 0; iter < DEFAULT_WARN; iter++) {
+        for (int iter = 0; iter < nwarm; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
             memcpy_async(max_size * iter, size);
 #elif defined(TEST_MEMCPY_ASYNC_STREAM)
@@ -288,7 +317,7 @@ int main(int argc, char **argv)
 #endif
         }
         /* touch and check destination buffer */
-        check_buffer(dbuf, size, DEFAULT_WARN, max_size, 'a');
+        check_buffer(dbuf, size, nwarm, max_size, 'a');
 
         /* reset buffer for all iterations */
         set_buffer(sbuf, buf_size, size);
@@ -301,7 +330,7 @@ int main(int argc, char **argv)
 
         cudaProfilerStart();
         double t0 = MPI_Wtime();
-        for (int iter = 0; iter < DEFAULT_ITER; iter++) {
+        for (int iter = 0; iter < niter; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
             memcpy_async(max_size * iter, size);
 #elif defined(TEST_MEMCPY_ASYNC_STREAM)
@@ -314,9 +343,9 @@ int main(int argc, char **argv)
         cudaProfilerStop();
 
         /* touch and check destination buffer */
-        check_buffer(dbuf, size, DEFAULT_ITER, max_size, size);
+        check_buffer(dbuf, size, niter, max_size, size);
 
-        double lat = (t1 - t0) * 1e6 / DEFAULT_ITER;    // in us
+        double lat = (t1 - t0) * 1e6 / niter;   // in us
         printf("%ld\t %.2f\n", size, lat);
     }
 
