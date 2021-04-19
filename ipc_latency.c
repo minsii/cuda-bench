@@ -21,12 +21,14 @@
 #define DEFAULT_WARN 100
 
 char *sbuf, *dbuf;
-void *comm_buf, *check_buf /* used for check results */ ;
+void *comm_buf, *ipc_buf, *check_buf; /* used for check results */ ;
 size_t min_size = 1, max_size = DEFAULT_SIZE, buf_size;
 cudaStream_t stream;
 cudaIpcMemHandle_t ipc_handle;
 int stream_on_dev = 0, map_to_dev = 0;  /* by default use source steram and map to source dev */
 int comm_size, comm_rank;
+int nwarm = DEFAULT_WARN, niter = DEFAULT_ITER;
+int s_devid = 0, d_devid = 1;
 
 #define CUDA_ERR_ASSERT(cerr) do {              \
     if (cerr != cudaSuccess) {                                                           \
@@ -60,6 +62,50 @@ static void memcpy_async_stream(size_t off, size_t size)
     CUDA_ERR_ASSERT(cerr);
 
     cerr = cudaStreamSynchronize(stream);
+    CUDA_ERR_ASSERT(cerr);
+}
+
+static void enable_p2p(int device, int remote_device)
+{
+    int access = 0;
+    cudaError_t cerr;
+
+    int cur_device;
+    cerr = cudaGetDevice(&cur_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaSetDevice(device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaDeviceCanAccessPeer(&access, device, remote_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    if (access) {
+        cerr = cudaDeviceEnablePeerAccess(remote_device, 0);
+        CUDA_ERR_ASSERT(cerr);
+
+        printf("enabled P2P for dev %d->%d\n", device, remote_device);
+    }
+
+    cerr = cudaSetDevice(cur_device);
+    CUDA_ERR_ASSERT(cerr);
+}
+
+static void disable_p2p(int device, int remote_device)
+{
+    cudaError_t cerr;
+
+    int cur_device;
+    cerr = cudaGetDevice(&cur_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaSetDevice(device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaDeviceDisablePeerAccess(remote_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaSetDevice(cur_device);
     CUDA_ERR_ASSERT(cerr);
 }
 
@@ -144,6 +190,12 @@ static void cuda_init(void)
     nvtxNameCudaDeviceA(0, "dev0");
     nvtxNameCudaDeviceA(1, "dev1");
 
+    if (comm_rank == 0) {
+        /* Enable P2P for both dev0->dev1 and dev1->dev0 */
+        enable_p2p(0, 1);
+        enable_p2p(1, 0);
+    }
+
 #ifdef TEST_MEMCPY_ASYNC_STREAM
     /* Only rank 0 handles transfer */
     if (comm_rank == 0) {
@@ -159,6 +211,10 @@ static void cuda_destroy(void)
         cudaStreamDestroy(stream);
     }
 #endif
+    if (comm_rank == 0) {
+        disable_p2p(0, 1);
+        disable_p2p(1, 0);
+    }
 }
 
 static void set_buffer(char *buf, size_t size, char c)
@@ -242,30 +298,32 @@ static void destroy_ipc(void *ptr)
 static void init_buffers(void)
 {
     cudaError_t cerr;
-    buf_size = DEFAULT_ITER * max_size;
+    buf_size = niter * max_size;
 
     comm_buf = cuda_malloc(buf_size, comm_rank);
 
     cerr = cudaMallocHost(&check_buf, buf_size);
     CUDA_ERR_ASSERT(cerr);
 
-    if (comm_rank == 0) {
-        sbuf = comm_buf;
-    } else {
-        dbuf = comm_buf;
-    }
-
     printf("rank %d allocated comm_buf=%p, latency for sizes %ld:%ld, buffer size=%ld\n",
            comm_rank, comm_buf, min_size, max_size, buf_size);
     report_buffer_attr(comm_buf);
 
-    /* Rank 0 maps dbuf on rank 1 and assign the mapped addr to local dbuf */
-    void *ipc_buf = dbuf;       /* for void casting */
+    /* Rank 0 maps comm_buf on rank 1 and assign the mapped addr to local ipc_buf */
+    ipc_buf = comm_buf; /* for avoid casting */
     exchange_ipc(&ipc_buf);
-    dbuf = ipc_buf;
 
     if (comm_rank == 0) {
-        printf("rank %d mapped dbuf=%p on device %d\n", comm_rank, dbuf, map_to_dev == 0 ? 0 : 1);
+        sbuf = s_devid == 0 ? comm_buf : ipc_buf;
+        dbuf = d_devid == 0 ? comm_buf : ipc_buf;
+
+        printf("rank %d mapped ipc_buf=%p on device %d\n"
+               "set sbuf=%p (dev %d), dbuf=%p (dev %d)\n",
+               comm_rank, ipc_buf, map_to_dev == 0 ? 0 : 1);
+
+        printf("rank %d set sbuf %p on dev %d\n", comm_rank, sbuf, s_devid);
+        report_buffer_attr(sbuf);
+        printf("rank %d set dbuf %p on dev %d\n", comm_rank, dbuf, d_devid);
         report_buffer_attr(dbuf);
     }
 }
@@ -273,7 +331,7 @@ static void init_buffers(void)
 static void free_buffers(void)
 {
     if (comm_rank == 0)
-        destroy_ipc(dbuf);
+        destroy_ipc(ipc_buf);
     cuda_free(comm_buf);
     cudaFreeHost(check_buf);
 }
@@ -281,8 +339,8 @@ static void free_buffers(void)
 static void set_params(int argc, char **argv)
 {
     int c;
-    char *mins, *maxs;
-    while ((c = getopt(argc, argv, "s:t:m:")) != -1) {
+    char *mins, *maxs, *iter, *warm, *src_devid, *dst_devid;
+    while ((c = getopt(argc, argv, "s:t:m:i:d:h:")) != -1) {
         switch (c) {
             case 's':
                 mins = strtok(optarg, ":");
@@ -298,9 +356,27 @@ static void set_params(int argc, char **argv)
             case 'm':
                 map_to_dev = atoi(optarg);
                 break;
+            case 'i':
+                warm = strtok(optarg, ":");
+                iter = strtok(NULL, ":");
+                if (warm && iter) {
+                    nwarm = atoi(warm);
+                    niter = atoi(iter);
+                }
+                break;
+            case 'd':
+                src_devid = strtok(optarg, ":");
+                dst_devid = strtok(NULL, ":");
+                if (src_devid && dst_devid) {
+                    s_devid = atoi(src_devid);
+                    d_devid = atoi(dst_devid);
+                }
+                break;
             case 'h':
                 printf("./ipc_latency -s <message size, format min:max> "
-                       "-t <stream on device, value 0|1> -m <map to device, value 0|1>");
+                       "-t <stream on device, value 0|1> -m <map to device, value 0|1> "
+                       "-i <number of warmming up: number of iteration>"
+                       "-d <src device:dst device|default 0:1>");
                 abort();
                 break;
             default:
@@ -332,22 +408,17 @@ int main(int argc, char **argv)
     cuda_init();
     init_buffers();
 
-    for (int size = min_size; size <= max_size; size *= 2) {
+    MPI_Barrier(MPI_COMM_WORLD);
 
-        MPI_Barrier(MPI_COMM_WORLD);    /* ensure buffers are ready to update */
-
-        /* reset buffer for all iterations */
-        if (comm_rank == 0) {
+    /* let rank 0 perform all data transfer and data setup because
+     * it dynamically setups sbuf and dbuf */
+    if (comm_rank == 0) {
+        for (int size = min_size; size <= max_size; size *= 2) {
+            /* reset buffer for all iterations */
             set_buffer(sbuf, buf_size, 'a');
-        } else {
             reset_buffer(dbuf, buf_size);
-        }
 
-        MPI_Barrier(MPI_COMM_WORLD);    /* ensure buffers have been updated */
-
-        /* rank 0 performs data transfer similar to RMA */
-        if (comm_rank == 0) {
-            for (int iter = 0; iter < DEFAULT_WARN; iter++) {
+            for (int iter = 0; iter < nwarm; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
                 memcpy_async(max_size * iter, size);
 #elif defined(TEST_MEMCPY_ASYNC_STREAM)
@@ -356,38 +427,24 @@ int main(int argc, char **argv)
                 memcpy_sync(max_size * iter, size);
 #endif
             }
-        }
 
-        MPI_Barrier(MPI_COMM_WORLD);    /* ensure data transfer is done on rank 0 */
-        if (comm_rank == 1) {
             /* touch and check destination buffer */
-            check_buffer(dbuf, size, DEFAULT_WARN, max_size, 'a');
-        }
+            check_buffer(dbuf, size, nwarm, max_size, 'a');
 
-        MPI_Barrier(MPI_COMM_WORLD);    /* ensure buffers are ready to update */
-
-        /* reset buffer for all iterations */
-        if (comm_rank == 0) {
+            /* reset buffer for all iterations */
             set_buffer(sbuf, buf_size, size);
-        } else {
             reset_buffer(dbuf, buf_size);
-        }
 
-        MPI_Barrier(MPI_COMM_WORLD);    /* ensure buffers have been updated */
-
-        if (comm_rank == 0) {
             int cur_device;
             cudaError_t cerr = cudaGetDevice(&cur_device);
             CUDA_ERR_ASSERT(cerr);
             printf("size %d, cur_device=%d\n", size, cur_device);
-        }
 
-        cudaProfilerStart();
-        double t0, t1;
-        /* rank 0 performs data transfer similar to RMA */
-        if (comm_rank == 0) {
+            double t0, t1;
+
+            cudaProfilerStart();
             t0 = MPI_Wtime();
-            for (int iter = 0; iter < DEFAULT_ITER; iter++) {
+            for (int iter = 0; iter < niter; iter++) {
 #if defined(TEST_MEMCPY_ASYNC)
                 memcpy_async(max_size * iter, size);
 #elif defined(TEST_MEMCPY_ASYNC_STREAM)
@@ -396,22 +453,18 @@ int main(int argc, char **argv)
                 memcpy_sync(max_size * iter, size);
 #endif
             }
+            cudaProfilerStop();
             t1 = MPI_Wtime();
-        }
-        cudaProfilerStop();
 
-        MPI_Barrier(MPI_COMM_WORLD);    /* ensure data transfer is done on rank 0 */
-
-        if (comm_rank == 1) {
             /* touch and check destination buffer */
-            check_buffer(dbuf, size, DEFAULT_ITER, max_size, size);
-        }
+            check_buffer(dbuf, size, niter, max_size, 'a');
 
-        if (comm_rank == 0) {
-            double lat = (t1 - t0) * 1e6 / DEFAULT_ITER;        // in us
+            double lat = (t1 - t0) * 1e6 / niter;       // in us
             printf("%ld\t %.2f\n", size, lat);
         }
     }
+
+    MPI_Barrier(MPI_COMM_WORLD);
 
     free_buffers();
     cuda_destroy();
