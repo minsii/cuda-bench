@@ -294,6 +294,11 @@ int main(int argc, char **argv)
         set_buffer(sbuf, buf_size, size);
         reset_buffer(dbuf, buf_size);
 
+        int cur_device;
+        cudaError_t cerr = cudaGetDevice(&cur_device);
+        CUDA_ERR_ASSERT(cerr);
+        printf("size %d, cur_device=%d\n", size, cur_device);
+
         cudaProfilerStart();
         double t0 = MPI_Wtime();
         for (int iter = 0; iter < DEFAULT_ITER; iter++) {

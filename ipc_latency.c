@@ -55,6 +55,7 @@ static void memcpy_async(size_t off, size_t size)
 static void memcpy_async_stream(size_t off, size_t size)
 {
     int cerr = cudaSuccess;
+
     cerr = cudaMemcpyAsync(dbuf + off, sbuf + off, size, cudaMemcpyDefault, stream);
     CUDA_ERR_ASSERT(cerr);
 
@@ -373,6 +374,13 @@ int main(int argc, char **argv)
         }
 
         MPI_Barrier(MPI_COMM_WORLD);    /* ensure buffers have been updated */
+
+        if (comm_rank == 0) {
+            int cur_device;
+            cudaError_t cerr = cudaGetDevice(&cur_device);
+            CUDA_ERR_ASSERT(cerr);
+            printf("size %d, cur_device=%d\n", size, cur_device);
+        }
 
         cudaProfilerStart();
         double t0, t1;
