@@ -177,7 +177,7 @@ static void create_stream(int device)
         CUDA_ERR_ASSERT(cerr);
     }
 
-    printf("rank %d created stream 0x%lx on device %d\n", comm_rank, stream, device);
+    printf("rank %d created stream %s on device %d\n", comm_rank, streamname, device);
 }
 
 static void cuda_init(void)
@@ -327,9 +327,7 @@ static void init_buffers(void)
         sbuf = s_devid == 0 ? comm_buf : ipc_buf;
         dbuf = d_devid == 0 ? comm_buf : ipc_buf;
 
-        printf("rank %d mapped ipc_buf=%p on device %d\n"
-               "set sbuf=%p (dev %d), dbuf=%p (dev %d)\n",
-               comm_rank, ipc_buf, map_to_dev == 0 ? 0 : 1);
+        printf("rank %d mapped ipc_buf=%p on device %d\n", comm_rank, ipc_buf, map_to_dev == 0 ? 0 : 1);
 
         printf("rank %d set sbuf %p on dev %d\n", comm_rank, sbuf, s_devid);
         report_buffer_attr(sbuf);
@@ -448,7 +446,7 @@ int main(int argc, char **argv)
             int cur_device;
             cudaError_t cerr = cudaGetDevice(&cur_device);
             CUDA_ERR_ASSERT(cerr);
-            printf("size %d, cur_device=%d\n", size, cur_device);
+            printf("memcpy size %d, cur_device=%d\n", size, cur_device);
 
             double t0, t1;
 
@@ -463,8 +461,8 @@ int main(int argc, char **argv)
                 memcpy_sync(max_size * iter, size);
 #endif
             }
-            cudaProfilerStop();
             t1 = MPI_Wtime();
+            cudaProfilerStop();
 
             /* touch and check destination buffer */
             check_buffer(dbuf, size, niter, max_size, 'a');
