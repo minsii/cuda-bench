@@ -13,6 +13,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <nvToolsExt.h>
+#include <nvToolsExtCudaRt.h>
+
 #define DEFAULT_SIZE 65536
 #define DEFAULT_ITER 10000
 #define DEFAULT_WARN 100
@@ -107,6 +110,11 @@ static void create_stream(int device)
     cerr = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
     CUDA_ERR_ASSERT(cerr);
 
+    char streamname[100];
+    sprintf(streamname, "dev%d-stream", device);
+    nvtxNameCudaStreamA(stream, streamname);
+    printf("created %s\n", streamname);
+
     if (cur_device != device) {
         cerr = cudaSetDevice(cur_device);
         CUDA_ERR_ASSERT(cerr);
@@ -131,6 +139,9 @@ static void cuda_init(void)
     /* Default on device rank */
     cerr = cudaSetDevice(comm_rank);
     CUDA_ERR_ASSERT(cerr);
+
+    nvtxNameCudaDeviceA(0, "dev0");
+    nvtxNameCudaDeviceA(1, "dev1");
 
 #ifdef TEST_MEMCPY_ASYNC_STREAM
     /* Only rank 0 handles transfer */
