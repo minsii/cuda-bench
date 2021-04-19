@@ -84,6 +84,24 @@ static void enable_p2p(int device, int remote_device)
     CUDA_ERR_ASSERT(cerr);
 }
 
+static void disable_p2p(int device, int remote_device)
+{
+    cudaError_t cerr;
+
+    int cur_device;
+    cerr = cudaGetDevice(&cur_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaSetDevice(device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaDeviceDisablePeerAccess(remote_device);
+    CUDA_ERR_ASSERT(cerr);
+
+    cerr = cudaSetDevice(cur_device);
+    CUDA_ERR_ASSERT(cerr);
+}
+
 static void *cuda_malloc(size_t size, int device)
 {
     void *ptr = NULL;
@@ -178,6 +196,9 @@ static void cuda_destroy(void)
 #ifdef TEST_MEMCPY_ASYNC_STREAM
     cudaStreamDestroy(stream);
 #endif
+
+    disable_p2p(0, 1);
+    disable_p2p(1, 0);
 }
 
 static void set_buffer(char *buf, size_t size, char c)
