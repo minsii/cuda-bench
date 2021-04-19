@@ -29,6 +29,8 @@ int stream_on_dev = 0, map_to_dev = 0;  /* by default use source steram and map 
 int comm_size, comm_rank;
 int nwarm = DEFAULT_WARN, niter = DEFAULT_ITER;
 int s_devid = 0, d_devid = 1;
+int enabled_p2p[2]; /* flag to mark whether this test enabled P2P for dev0->dev1 and
+                     * dev1->dev0 direction. Used for disable P2P */
 
 #define CUDA_ERR_ASSERT(cerr) do {              \
     if (cerr != cudaSuccess) {                                                           \
@@ -82,9 +84,13 @@ static void enable_p2p(int device, int remote_device)
 
     if (access) {
         cerr = cudaDeviceEnablePeerAccess(remote_device, 0);
-        CUDA_ERR_ASSERT(cerr);
-
-        printf("enabled P2P for dev %d->%d\n", device, remote_device);
+        if (cerr == cudaErrorPeerAccessAlreadyEnabled) {
+            printf("P2P for dev %d->%d is already enabled\n", device, remote_device);
+        } else {
+            CUDA_ERR_ASSERT(cerr);
+            printf("enabled P2P for dev %d->%d\n", device, remote_device);
+            enabled_p2p[device] = 1;
+        }
     }
 
     cerr = cudaSetDevice(cur_device);
@@ -94,6 +100,10 @@ static void enable_p2p(int device, int remote_device)
 static void disable_p2p(int device, int remote_device)
 {
     cudaError_t cerr;
+
+    /* skip if device->remote_device is not enabled by this program. */
+    if (!enabled_p2p[device])
+        return;
 
     int cur_device;
     cerr = cudaGetDevice(&cur_device);
